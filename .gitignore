@@ -11,7 +11,8 @@ instance/
 *.log
 
 # Large raw datasets
-dataset/raw/
+dataset/raw/*
+!dataset/raw/README.md
 
 # Flutter/Dart generated files
 hbp_mobile_app/.dart_tool/

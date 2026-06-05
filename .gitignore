@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.Python
+venv/
+.venv/
+backend/venv/
+
+# Flask/runtime
+instance/
+*.log
+
+# Large raw datasets
+dataset/raw/
+
+# Flutter/Dart generated files
+hbp_mobile_app/.dart_tool/
+hbp_mobile_app/build/
+hbp_mobile_app/.pub-cache/
+
+# IDE/editor files
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db

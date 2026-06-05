@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>
+        AI HBP Monitoring Dashboard
+    </title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+
+        body {
+
+            background: #081229;
+
+            color: white;
+
+            font-family: Arial;
+
+            padding: 20px;
+        }
+
+        h1 {
+
+            margin-bottom: 30px;
+        }
+
+        .card {
+
+            background: #1d2a44;
+
+            padding: 20px;
+
+            border-radius: 20px;
+
+            margin-bottom: 20px;
+        }
+
+        .value {
+
+            font-size: 60px;
+
+            font-weight: bold;
+        }
+
+        .risk {
+
+            font-size: 30px;
+
+            font-weight: bold;
+        }
+
+        .alert {
+
+            margin-top: 20px;
+
+            padding: 15px;
+
+            border-radius: 12px;
+
+            font-weight: bold;
+        }
+
+        .high {
+
+            background: #8b1717;
+        }
+
+        .moderate {
+
+            background: #8a4d08;
+        }
+
+        .low {
+
+            background: #0b6b2c;
+        }
+
+        .sensor-grid {
+
+            display: grid;
+
+            grid-template-columns:
+            repeat(auto-fit, minmax(200px,1fr));
+
+            gap: 20px;
+        }
+
+        .sensor-box {
+
+            background: #243555;
+
+            padding: 20px;
+
+            border-radius: 15px;
+        }
+
+        canvas {
+
+            background: white;
+
+            border-radius: 15px;
+
+            padding: 10px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <h1>
+        AI HBP Monitoring and Prediction  Dashboard
+    </h1>
+
+
+    <!-- BP CARD -->
+
+    <div class="card">
+
+        <h2>
+            Predicted Systolic BP
+        </h2>
+
+        <div class="value"
+             id="bp">
+
+            --
+        </div>
+
+        <div class="risk"
+             id="risk">
+
+            --
+        </div>
+
+        <div class="alert moderate"
+             id="alertBox">
+
+            Waiting for prediction...
+        </div>
+
+    </div>
+
+
+    <!-- SENSOR DATA -->
+
+    <div class="sensor-grid">
+
+        <div class="sensor-box">
+
+            <h3>
+                Heart Beat Rate
+            </h3>
+
+            <p id="heartRate">
+                --
+            </p>
+
+        </div>
+
+        <div class="sensor-box">
+
+            <h3>
+                Temperature
+            </h3>
+
+            <p id="temperature">
+                --
+            </p>
+
+        </div>
+
+        <div class="sensor-box">
+
+            <h3>
+                Respiratory Rate
+            </h3>
+
+            <p id="respRate">
+                --
+            </p>
+
+        </div>
+
+        <div class="sensor-box">
+
+            <h3>
+                Risk Score
+            </h3>
+
+            <p id="riskScore">
+                --
+            </p>
+
+        </div>
+
+    </div>
+
+
+    <!-- CHART -->
+
+    <div class="card">
+
+        <h2>
+            Blood Pressure Trend
+        </h2>
+
+        <canvas id="bpChart"></canvas>
+
+    </div>
+
+
+<script>
+
+const ctx =
+document.getElementById(
+    'bpChart'
+).getContext('2d');
+
+
+const bpChart = new Chart(ctx, {
+
+    type: 'line',
+
+    data: {
+
+        labels: [],
+
+        datasets: [{
+
+            label: 'Systolic BP',
+
+            data: [],
+
+            borderWidth: 2
+        }]
+    }
+});
+
+
+async function fetchPrediction() {
+
+    const response = await fetch(
+        '/predict',
+
+        {
+
+            method: 'POST',
+
+            headers: {
+
+                'Content-Type':
+                'application/json'
+            },
+
+            body: JSON.stringify({
+
+                ppg_signal:
+                Array(875).fill(0.5)
+            })
+        }
+    );
+
+
+    const data = await response.json();
+
+
+    // =====================
+    // UPDATE UI
+    // =====================
+
+    document.getElementById(
+        'bp'
+    ).innerText =
+        data.predicted_systolic_bp;
+
+
+    document.getElementById(
+        'risk'
+    ).innerText =
+        data.risk_level;
+
+
+    document.getElementById(
+        'heartRate'
+    ).innerText =
+        data.heart_rate + " bpm";
+
+
+    document.getElementById(
+        'temperature'
+    ).innerText =
+        data.temperature + " °C";
+
+
+    document.getElementById(
+        'respRate'
+    ).innerText =
+        data.respiratory_rate + " breaths/min";
+
+
+    document.getElementById(
+        'riskScore'
+    ).innerText =
+        data.risk_score;
+
+
+    // =====================
+    // ALERT COLORS
+    // =====================
+
+    const alertBox =
+    document.getElementById(
+        'alertBox'
+    );
+
+
+    if(data.risk_level === "HIGH") {
+
+        alertBox.className =
+        "alert high";
+
+        alertBox.innerText =
+        "🚨 HIGH BLOOD PRESSURE ALERT";
+    }
+
+    else if(
+        data.risk_level ===
+        "MODERATE"
+    ) {
+
+        alertBox.className =
+        "alert moderate";
+
+        alertBox.innerText =
+        "⚠ MODERATE HEALTH RISK";
+    }
+
+    else {
+
+        alertBox.className =
+        "alert low";
+
+        alertBox.innerText =
+        "✅ NORMAL CONDITION";
+    }
+
+
+    // =====================
+    // UPDATE CHART
+    // =====================
+
+    const now =
+    new Date().toLocaleTimeString();
+
+
+    bpChart.data.labels.push(
+        now
+    );
+
+    bpChart.data.datasets[0]
+    .data.push(
+        data.predicted_systolic_bp
+    );
+
+
+    if(
+        bpChart.data.labels.length > 10
+    ) {
+
+        bpChart.data.labels.shift();
+
+        bpChart.data.datasets[0]
+        .data.shift();
+    }
+
+    bpChart.update();
+}
+
+
+// AUTO REFRESH
+
+setInterval(
+    fetchPrediction,
+    3000
+);
+
+
+// INITIAL LOAD
+
+fetchPrediction();
+
+</script>
+
+</body>
+</html>

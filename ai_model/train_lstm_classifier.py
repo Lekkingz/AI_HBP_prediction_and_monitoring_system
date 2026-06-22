@@ -1,27 +1,51 @@
 import numpy as np
 
 from sklearn.model_selection import train_test_split
-
-from tensorflow.keras.models import Sequential
-
-from tensorflow.keras.layers import (
-    LSTM,
-    Dense,
-    Dropout
-)
-
-from tensorflow.keras.utils import to_categorical
-
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
-    roc_auc_score
+    roc_auc_score,
+    confusion_matrix
 )
 
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import (
+    LSTM,
+    Dense,
+    Dropout
+)
+from tensorflow.keras.utils import to_categorical
+
+
 # =========================
-# Load Dataset
+# SPECIFICITY FUNCTION
+# =========================
+
+def multiclass_specificity(y_true, y_pred):
+    cm = confusion_matrix(y_true, y_pred)
+    n_classes = cm.shape[0]
+    specificities = []
+
+    for i in range(n_classes):
+        tp = cm[i, i]
+        fn = np.sum(cm[i, :]) - tp
+        fp = np.sum(cm[:, i]) - tp
+        tn = np.sum(cm) - (tp + fn + fp)
+
+        if (tn + fp) == 0:
+            spec = 0.0
+        else:
+            spec = tn / (tn + fp)
+
+        specificities.append(spec)
+
+    return np.mean(specificities)
+
+
+# =========================
+# LOAD DATASET
 # =========================
 
 X = np.load(
@@ -32,8 +56,9 @@ y = np.load(
     "../dataset/processed/y_class.npy"
 )
 
+
 # =========================
-# Reshape Input
+# RESHAPE INPUT
 # =========================
 
 X = X.reshape(
@@ -42,8 +67,9 @@ X = X.reshape(
     1
 )
 
+
 # =========================
-# One-Hot Encode Labels
+# ONE-HOT ENCODE LABELS
 # =========================
 
 y_cat = to_categorical(
@@ -51,31 +77,29 @@ y_cat = to_categorical(
     num_classes=3
 )
 
+
 # =========================
-# Train/Test Split
+# TRAIN / TEST SPLIT
 # =========================
 
 X_train, X_test, y_train, y_test = train_test_split(
-
     X,
     y_cat,
-
     test_size=0.2,
-
     random_state=42
 )
 
+
 # =========================
-# Build LSTM Model
+# BUILD LSTM MODEL
 # =========================
 
 model = Sequential()
 
 model.add(
-
     LSTM(
         64,
-        input_shape=(875,1)
+        input_shape=(875, 1)
     )
 )
 
@@ -97,43 +121,39 @@ model.add(
     )
 )
 
+
 # =========================
-# Compile Model
+# COMPILE MODEL
 # =========================
 
 model.compile(
-
     optimizer='adam',
-
     loss='categorical_crossentropy',
-
     metrics=['accuracy']
 )
 
+
 # =========================
-# Train Model
+# TRAIN MODEL
 # =========================
 
 history = model.fit(
-
     X_train,
     y_train,
-
     epochs=10,
-
     batch_size=32,
-
     validation_split=0.2
 )
 
+
 # =========================
-# Predictions
+# PREDICTIONS
 # =========================
 
-y_pred = model.predict(X_test)
+y_pred_probs = model.predict(X_test)
 
 y_pred_classes = np.argmax(
-    y_pred,
+    y_pred_probs,
     axis=1
 )
 
@@ -142,8 +162,9 @@ y_true = np.argmax(
     axis=1
 )
 
+
 # =========================
-# Metrics
+# METRICS
 # =========================
 
 accuracy = accuracy_score(
@@ -169,30 +190,33 @@ f1 = f1_score(
     average='weighted'
 )
 
+specificity = multiclass_specificity(
+    y_true,
+    y_pred_classes
+)
+
 auc = roc_auc_score(
     y_test,
-    y_pred,
+    y_pred_probs,
     multi_class='ovr'
 )
 
+
 # =========================
-# Print Results
+# PRINT RESULTS
 # =========================
 
 print("\n===== LSTM RESULTS =====\n")
+print(f"Accuracy    : {accuracy:.4f}")
+print(f"Precision   : {precision:.4f}")
+print(f"Recall      : {recall:.4f}")
+print(f"F1-Score    : {f1:.4f}")
+print(f"Specificity : {specificity:.4f}")
+print(f"AUC         : {auc:.4f}")
 
-print(f"Accuracy   : {accuracy:.4f}")
-
-print(f"Precision  : {precision:.4f}")
-
-print(f"Recall     : {recall:.4f}")
-
-print(f"F1-Score   : {f1:.4f}")
-
-print(f"AUC        : {auc:.4f}")
 
 # =========================
-# Save Model
+# SAVE MODEL
 # =========================
 
 model.save(

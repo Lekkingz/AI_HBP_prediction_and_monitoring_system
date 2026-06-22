@@ -3,27 +3,48 @@ import numpy as np
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
-    roc_auc_score
+    roc_auc_score,
+    confusion_matrix
 )
 
 from tensorflow.keras.models import Sequential
-
 from tensorflow.keras.layers import (
     LSTM,
     Bidirectional,
     Dense,
     Dropout
 )
+from tensorflow.keras.utils import to_categorical
 
-from tensorflow.keras.utils import (
-    to_categorical
-)
+
+# =========================
+# SPECIFICITY FUNCTION
+# =========================
+
+def multiclass_specificity(y_true, y_pred):
+    cm = confusion_matrix(y_true, y_pred)
+    n_classes = cm.shape[0]
+    specificities = []
+
+    for i in range(n_classes):
+        tp = cm[i, i]
+        fn = np.sum(cm[i, :]) - tp
+        fp = np.sum(cm[:, i]) - tp
+        tn = np.sum(cm) - (tp + fn + fp)
+
+        if (tn + fp) == 0:
+            spec = 0.0
+        else:
+            spec = tn / (tn + fp)
+
+        specificities.append(spec)
+
+    return np.mean(specificities)
 
 
 # =========================
@@ -34,9 +55,7 @@ with h5py.File(
     "../dataset/processed/ppg_subset.h5",
     "r"
 ) as f:
-
     X = f["ppg"][:]
-
     y = f["label"][:]
 
 
@@ -54,13 +73,10 @@ y = y[:, 0]
 classes = []
 
 for bp in y:
-
     if bp < 120:
         classes.append("NORMAL")
-
     elif bp < 140:
         classes.append("ELEVATED")
-
     else:
         classes.append("HIGH")
 
@@ -72,14 +88,8 @@ classes = np.array(classes)
 # =========================
 
 encoder = LabelEncoder()
-
-y_encoded = encoder.fit_transform(
-    classes
-)
-
-y_categorical = to_categorical(
-    y_encoded
-)
+y_encoded = encoder.fit_transform(classes)
+y_categorical = to_categorical(y_encoded)
 
 
 # =========================
@@ -94,16 +104,13 @@ X = X.reshape(
 
 
 # =========================
-# TRAIN TEST SPLIT
+# TRAIN / TEST SPLIT
 # =========================
 
 X_train, X_test, y_train, y_test = train_test_split(
-
     X,
     y_categorical,
-
     test_size=0.2,
-
     random_state=42
 )
 
@@ -113,15 +120,12 @@ X_train, X_test, y_train, y_test = train_test_split(
 # =========================
 
 model = Sequential([
-
     Bidirectional(
-
         LSTM(
             64,
             return_sequences=False
         ),
-
-        input_shape=(875,1)
+        input_shape=(875, 1)
     ),
 
     Dropout(0.3),
@@ -143,11 +147,8 @@ model = Sequential([
 # =========================
 
 model.compile(
-
     optimizer='adam',
-
     loss='categorical_crossentropy',
-
     metrics=['accuracy']
 )
 
@@ -157,14 +158,10 @@ model.compile(
 # =========================
 
 history = model.fit(
-
     X_train,
     y_train,
-
     epochs=10,
-
     batch_size=32,
-
     validation_split=0.2
 )
 
@@ -173,9 +170,7 @@ history = model.fit(
 # PREDICTIONS
 # =========================
 
-y_pred_probs = model.predict(
-    X_test
-)
+y_pred_probs = model.predict(X_test)
 
 y_pred = np.argmax(
     y_pred_probs,
@@ -215,6 +210,11 @@ f1 = f1_score(
     average='weighted'
 )
 
+specificity = multiclass_specificity(
+    y_true,
+    y_pred
+)
+
 auc = roc_auc_score(
     y_test,
     y_pred_probs,
@@ -227,12 +227,12 @@ auc = roc_auc_score(
 # =========================
 
 print("\n===== BiLSTM RESULTS =====\n")
-
-print(f"Accuracy : {accuracy:.4f}")
-print(f"Precision: {precision:.4f}")
-print(f"Recall   : {recall:.4f}")
-print(f"F1-Score : {f1:.4f}")
-print(f"AUC      : {auc:.4f}")
+print(f"Accuracy    : {accuracy:.4f}")
+print(f"Precision   : {precision:.4f}")
+print(f"Recall      : {recall:.4f}")
+print(f"F1-Score    : {f1:.4f}")
+print(f"Specificity : {specificity:.4f}")
+print(f"AUC         : {auc:.4f}")
 
 
 # =========================

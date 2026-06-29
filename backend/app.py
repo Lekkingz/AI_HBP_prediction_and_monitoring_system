@@ -1,4 +1,5 @@
 import os
+import traceback
 from flask import Flask
 from flask import jsonify
 from flask import request
@@ -86,6 +87,12 @@ def predict():
 
         data = request.json
 
+        print("========== REQUEST RECEIVED ==========")
+        print(data)
+
+        if data is None:
+            raise Exception("No JSON received")
+
         # =========================
         # GET PPG SIGNAL
         # =========================
@@ -93,6 +100,16 @@ def predict():
         ppg_signal = data.get(
             "ppg_signal"
         )
+
+        if not isinstance(ppg_signal, list):
+            raise Exception("ppg_signal must be a list of samples")
+
+        print("PPG length:", len(ppg_signal))
+
+        if len(ppg_signal) != 875:
+            raise Exception(f"Expected 875 samples, got {len(ppg_signal)}")
+        print("First sample:", ppg_signal[0])
+        print("Last sample:", ppg_signal[-1])
 
         # =========================
         # GET HEART RATE
@@ -155,6 +172,7 @@ def predict():
         predicted_bp = predict_bp(
             ppg_signal
         )
+        print("Predicted BP:", predicted_bp)
 
         # =========================
         # FUZZY LOGIC
@@ -170,6 +188,7 @@ def predict():
 
             resp_value=respiratory_rate
         )
+        print("Fuzzy Result:", fuzzy_result)
 
         # =========================
         # SAVE LIVE RESULT
@@ -210,8 +229,10 @@ def predict():
 
     except Exception as e:
 
-        print("ERROR:")
-        print(e)
+        print("=" * 80)
+        print("FULL ERROR")
+        traceback.print_exc()
+        print("=" * 80)
 
         return jsonify({
 

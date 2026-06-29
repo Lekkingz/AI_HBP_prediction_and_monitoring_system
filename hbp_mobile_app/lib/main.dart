@@ -66,9 +66,14 @@ class _DashboardPageState
       await http.get(
 
         Uri.parse(
-          'http://192.168.1.164:5000/live-data'
+          'https://ai-hbp-prediction-and-monitoring-system.onrender.com/live-data'
         ),
       );
+
+      if (response.statusCode != 200) {
+        print("Server Error: ${response.statusCode}");
+        return;
+      }
 
       final data =
       jsonDecode(response.body);

@@ -10,6 +10,7 @@ import numpy as np
 # exceptions and tracebacks to be printed by this module.
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+os.environ.setdefault("KERAS_BACKEND", "tensorflow")
 
 
 MODEL_INPUT_LENGTH = 875
@@ -55,21 +56,21 @@ def load_prediction_model():
         return None
 
     try:
-        import tensorflow as tf
+        try:
+            from keras.models import load_model
+            print("Using standalone keras model loader.")
+        except Exception:
+            from tensorflow.keras.models import load_model
+            print("Using tensorflow.keras model loader.")
 
         try:
+            import tensorflow as tf
+
             tf.config.threading.set_inter_op_parallelism_threads(1)
             tf.config.threading.set_intra_op_parallelism_threads(1)
         except Exception:
-            print("Failed to set TensorFlow thread limits:")
+            print("TensorFlow thread limits unavailable:")
             traceback.print_exc()
-
-        try:
-            from tensorflow.keras.models import load_model
-            print("Using tensorflow.keras model loader.")
-        except Exception:
-            from keras.models import load_model
-            print("Using standalone keras model loader.")
 
         # compile=False avoids loading training-only optimizer/loss state that
         # can break between TensorFlow/Keras versions on Render.

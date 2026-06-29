@@ -7,5 +7,6 @@ requests>=2.32,<3
 scikit-fuzzy>=0.5,<1
 scikit-learn>=1.6,<2
 tensorflow==2.21.0
+keras>=3.0,<4
 gunicorn>=23,<24
 networkx>=3.0

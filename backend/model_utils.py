@@ -56,7 +56,6 @@ def load_prediction_model():
 
     try:
         import tensorflow as tf
-        from tensorflow.keras.models import load_model
 
         try:
             tf.config.threading.set_inter_op_parallelism_threads(1)
@@ -64,6 +63,13 @@ def load_prediction_model():
         except Exception:
             print("Failed to set TensorFlow thread limits:")
             traceback.print_exc()
+
+        try:
+            from tensorflow.keras.models import load_model
+            print("Using tensorflow.keras model loader.")
+        except Exception:
+            from keras.models import load_model
+            print("Using standalone keras model loader.")
 
         # compile=False avoids loading training-only optimizer/loss state that
         # can break between TensorFlow/Keras versions on Render.

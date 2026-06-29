@@ -225,14 +225,14 @@ def predict_bp(ppg_signal):
     """Run the blood-pressure model and return systolic BP as a float."""
 
     try:
+        ensure_model_ready()
+
         loaded_model = get_model()
 
         if loaded_model is None:
             raise ModelUnavailableError(
                 f"Prediction model is not loaded: {model_load_error}"
             )
-
-        ensure_model_ready()
 
         model_input = prepare_model_input(
             ppg_signal
@@ -276,5 +276,4 @@ def predict_bp(ppg_signal):
         raise PredictionError(str(exc)) from exc
 
 
-load_prediction_model()
 start_model_warmup()

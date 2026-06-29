@@ -1,4 +1,5 @@
 import os
+import threading
 import traceback
 
 import numpy as np
@@ -23,10 +24,17 @@ MODEL_FILE = os.path.abspath(
 
 model = None
 model_load_error = None
+model_ready = False
+model_warming = False
+model_lock = threading.Lock()
 
 
 class PredictionError(Exception):
     """Raised when prediction cannot be completed safely."""
+
+
+class ModelUnavailableError(PredictionError):
+    """Raised when the model is loading or warming up."""
 
 
 def load_prediction_model():
@@ -34,15 +42,25 @@ def load_prediction_model():
 
     global model
     global model_load_error
+    global model_ready
 
     if not os.path.exists(MODEL_FILE):
         model_load_error = f"Model file not found: {MODEL_FILE}"
+        model_ready = False
         print("Failed to load model:")
         print(model_load_error)
         return None
 
     try:
+        import tensorflow as tf
         from tensorflow.keras.models import load_model
+
+        try:
+            tf.config.threading.set_inter_op_parallelism_threads(1)
+            tf.config.threading.set_intra_op_parallelism_threads(1)
+        except Exception:
+            print("Failed to set TensorFlow thread limits:")
+            traceback.print_exc()
 
         # compile=False avoids loading training-only optimizer/loss state that
         # can break between TensorFlow/Keras versions on Render.
@@ -52,12 +70,14 @@ def load_prediction_model():
         )
 
         model = loaded_model
+        model_ready = False
         model_load_error = None
         print("Model loaded successfully.")
         return model
 
     except Exception as exc:
         model = None
+        model_ready = False
         model_load_error = str(exc)
         print("Failed to load model:")
         traceback.print_exc()
@@ -71,6 +91,93 @@ def get_model():
         return model
 
     return load_prediction_model()
+
+
+def warm_up_model():
+    """Run one dummy prediction outside the ESP32 request path."""
+
+    global model_ready
+    global model_warming
+    global model_load_error
+
+    with model_lock:
+        if model_ready or model_warming:
+            return
+
+        model_warming = True
+
+    try:
+        loaded_model = get_model()
+
+        if loaded_model is None:
+            raise ModelUnavailableError(
+                f"Prediction model is not loaded: {model_load_error}"
+            )
+
+        dummy_input = np.zeros(
+            (1, MODEL_INPUT_LENGTH, 1),
+            dtype=np.float32,
+        )
+
+        print("Warming prediction model...")
+        print("Model input shape:", dummy_input.shape)
+
+        loaded_model.predict(
+            dummy_input,
+            verbose=0,
+        )
+
+        with model_lock:
+            model_ready = True
+            model_load_error = None
+
+        print("Model warmup completed successfully.")
+
+    except Exception as exc:
+        with model_lock:
+            model_ready = False
+            model_load_error = str(exc)
+
+        print("Model warmup failed:")
+        traceback.print_exc()
+
+    finally:
+        with model_lock:
+            model_warming = False
+
+
+def start_model_warmup():
+    """Start warmup in the background so Gunicorn can answer quickly."""
+
+    thread = threading.Thread(
+        target=warm_up_model,
+        daemon=True,
+    )
+    thread.start()
+
+
+def ensure_model_ready():
+    """Fail fast while TensorFlow is warming instead of timing out on Render."""
+
+    with model_lock:
+        ready = model_ready
+        warming = model_warming
+        error = model_load_error
+
+    if ready:
+        return
+
+    if not warming:
+        start_model_warmup()
+
+    if error:
+        raise ModelUnavailableError(
+            f"Prediction model is warming up or unavailable: {error}"
+        )
+
+    raise ModelUnavailableError(
+        "Prediction model is warming up. Try again shortly."
+    )
 
 
 def prepare_model_input(ppg_signal):
@@ -121,9 +228,11 @@ def predict_bp(ppg_signal):
         loaded_model = get_model()
 
         if loaded_model is None:
-            raise PredictionError(
+            raise ModelUnavailableError(
                 f"Prediction model is not loaded: {model_load_error}"
             )
+
+        ensure_model_ready()
 
         model_input = prepare_model_input(
             ppg_signal
@@ -168,3 +277,4 @@ def predict_bp(ppg_signal):
 
 
 load_prediction_model()
+start_model_warmup()

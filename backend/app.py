@@ -12,6 +12,7 @@ from werkzeug.exceptions import HTTPException
 
 from fuzzy_logic import calculate_risk
 from model_utils import MODEL_INPUT_LENGTH
+from model_utils import ModelUnavailableError
 from model_utils import PredictionError
 from model_utils import predict_bp
 
@@ -301,6 +302,18 @@ def predict():
         return json_error(
             str(exc),
             400,
+        )
+
+    except ModelUnavailableError as exc:
+        elapsed_ms = (
+            time.perf_counter() - start_time
+        ) * 1000.0
+        print(f"Prediction unavailable in {elapsed_ms:.2f} ms")
+        print("Model unavailable:")
+        traceback.print_exc()
+        return json_error(
+            str(exc),
+            503,
         )
 
     except PredictionError as exc:

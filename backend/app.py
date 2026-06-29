@@ -1,255 +1,343 @@
+import math
 import os
+import threading
+import time
 import traceback
+
+import numpy as np
 from flask import Flask
 from flask import jsonify
 from flask import request
-from flask import render_template
+from werkzeug.exceptions import HTTPException
 
-from model_utils import predict_bp
 from fuzzy_logic import calculate_risk
+from model_utils import MODEL_INPUT_LENGTH
+from model_utils import PredictionError
+from model_utils import predict_bp
 
-
-# ======================================
-# FLASK APP
-# ======================================
 
 app = Flask(__name__)
 
 
-# ======================================
-# GLOBAL LIVE DATA
-# ======================================
-
+# Use a lock so continuous ESP32 uploads cannot expose partially updated live
+# data while the Flutter app is reading /live-data.
+latest_result_lock = threading.Lock()
 latest_result = {
-
     "predicted_systolic_bp": 0,
-
     "heart_rate": 0,
-
     "temperature": 0,
-
     "respiratory_rate": 0,
-
+    "risk_level": "WAITING",
     "risk_score": 0,
-
-    "risk_level": "WAITING"
 }
 
 
-# ======================================
-# DASHBOARD
-# ======================================
+class RequestValidationError(Exception):
+    """Raised for client payload problems that should return HTTP 400."""
 
-@app.route('/dashboard')
-def dashboard():
 
-    return render_template(
-        'dashboard.html'
+def json_error(message, status_code):
+    """Return every error as JSON so Gunicorn never serves Flask HTML errors."""
+
+    response = jsonify(
+        {
+            "error": str(message),
+        }
+    )
+    response.status_code = status_code
+    return response
+
+
+def _payload_size_bytes():
+    """Measure request size without consuming the cached Flask request body."""
+
+    payload = request.get_data(
+        cache=True,
+        as_text=False,
+    )
+    return len(payload or b"")
+
+
+def _parse_json_payload():
+    """Validate Content-Type and parse JSON safely."""
+
+    if not request.is_json:
+        raise RequestValidationError(
+            "Content-Type must be application/json"
+        )
+
+    data = request.get_json(
+        silent=True,
+    )
+
+    if data is None:
+        raise RequestValidationError(
+            "Invalid or empty JSON body"
+        )
+
+    if not isinstance(data, dict):
+        raise RequestValidationError(
+            "JSON body must be an object"
+        )
+
+    return data
+
+
+def _validate_ppg_signal(data):
+    """Validate ESP32 ppg_signal and convert samples to float32."""
+
+    if "ppg_signal" not in data:
+        raise RequestValidationError(
+            "ppg_signal is required"
+        )
+
+    ppg_signal = data.get(
+        "ppg_signal"
+    )
+
+    if not isinstance(ppg_signal, list):
+        raise RequestValidationError(
+            "ppg_signal must be a list of samples"
+        )
+
+    sample_count = len(
+        ppg_signal
+    )
+
+    print("Number of samples:", sample_count)
+
+    if sample_count != MODEL_INPUT_LENGTH:
+        raise RequestValidationError(
+            f"Expected {MODEL_INPUT_LENGTH} samples, got {sample_count}"
+        )
+
+    for index, sample in enumerate(ppg_signal):
+        if isinstance(sample, bool):
+            raise RequestValidationError(
+                f"ppg_signal sample {index} must be numeric"
+            )
+
+        if not isinstance(sample, (int, float)):
+            raise RequestValidationError(
+                f"ppg_signal sample {index} must be numeric"
+            )
+
+        if not math.isfinite(float(sample)):
+            raise RequestValidationError(
+                f"ppg_signal sample {index} must be finite"
+            )
+
+    ppg_array = np.asarray(
+        ppg_signal,
+        dtype=np.float32,
+    )
+
+    print("First sample:", float(ppg_array[0]))
+    print("Last sample:", float(ppg_array[-1]))
+
+    return ppg_array
+
+
+def _optional_float(data, field_name, default_value):
+    """Parse optional ESP32 numeric fields without rejecting older firmware."""
+
+    value = data.get(
+        field_name,
+        default_value,
+    )
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        print(f"Invalid {field_name}; using default {default_value}")
+        return float(default_value)
+
+    if not math.isfinite(number):
+        print(f"Non-finite {field_name}; using default {default_value}")
+        return float(default_value)
+
+    return number
+
+
+def _format_heart_rate(value):
+    """Keep API output compact: 75 instead of 75.0 when possible."""
+
+    rounded = round(
+        float(value),
+        1,
+    )
+
+    if rounded.is_integer():
+        return int(rounded)
+
+    return rounded
+
+
+@app.errorhandler(Exception)
+def handle_uncaught_exception(exc):
+    """Catch any uncaught Flask exception and return JSON instead of HTML."""
+
+    if isinstance(exc, HTTPException):
+        return json_error(
+            exc.description,
+            exc.code or 500,
+        )
+
+    print("Uncaught Flask exception:")
+    traceback.print_exc()
+    return json_error(
+        "Internal server error",
+        500,
     )
 
 
-# ======================================
-# HOME
-# ======================================
-
-@app.route('/')
+@app.route("/")
 def home():
-
     return "AI HBP Backend Running"
 
 
-# ======================================
-# LIVE DATA
-# ======================================
-
-@app.route('/live-data')
+@app.route("/live-data")
 def live_data():
+    with latest_result_lock:
+        result_copy = dict(
+            latest_result
+        )
 
     return jsonify(
-        latest_result
+        result_copy
     )
 
 
-# ======================================
-# PREDICT ROUTE
-# ======================================
-
 @app.route(
-    '/predict',
-    methods=['POST']
+    "/predict",
+    methods=["POST"],
 )
-
 def predict():
-
     global latest_result
 
+    start_time = time.perf_counter()
+
     try:
+        print("Request received")
+        print("Payload size:", _payload_size_bytes(), "bytes")
 
-        data = request.json
-
-        print("========== REQUEST RECEIVED ==========")
-        print(data)
-
-        if data is None:
-            raise Exception("No JSON received")
-
-        # =========================
-        # GET PPG SIGNAL
-        # =========================
-
-        ppg_signal = data.get(
-            "ppg_signal"
+        data = _parse_json_payload()
+        ppg_signal = _validate_ppg_signal(
+            data
         )
 
-        if not isinstance(ppg_signal, list):
-            raise Exception("ppg_signal must be a list of samples")
-
-        print("PPG length:", len(ppg_signal))
-
-        if len(ppg_signal) != 875:
-            raise Exception(f"Expected 875 samples, got {len(ppg_signal)}")
-        print("First sample:", ppg_signal[0])
-        print("Last sample:", ppg_signal[-1])
-
-        # =========================
-        # GET HEART RATE
-        # =========================
-
-        heart_rate = data.get(
-            "heart_rate"
+        heart_rate = _optional_float(
+            data,
+            "heart_rate",
+            75.0,
         )
-
-        # =========================
-        # GET TEMPERATURE
-        # =========================
-
-        temperature = data.get(
-            "temperature"
+        temperature = _optional_float(
+            data,
+            "temperature",
+            36.5,
         )
-
-        # =========================
-        # FIX INVALID VALUES
-        # =========================
-
-        if heart_rate is None:
-
-            heart_rate = 75
-
-        if temperature is None:
-
-            temperature = 36.5
-
-        try:
-
-            heart_rate = float(
-                heart_rate
-            )
-
-        except:
-
-            heart_rate = 75
-
-        try:
-
-            temperature = float(
-                temperature
-            )
-
-        except:
-
-            temperature = 36.5
-
-        # =========================
-        # RESPIRATORY RATE
-        # =========================
-
         respiratory_rate = 16
-
-        # =========================
-        # AI PREDICTION
-        # =========================
 
         predicted_bp = predict_bp(
             ppg_signal
         )
-        print("Predicted BP:", predicted_bp)
-
-        # =========================
-        # FUZZY LOGIC
-        # =========================
 
         fuzzy_result = calculate_risk(
-
             bp_value=predicted_bp,
-
             hr_value=heart_rate,
-
             temp_value=temperature,
-
-            resp_value=respiratory_rate
+            resp_value=respiratory_rate,
         )
-        print("Fuzzy Result:", fuzzy_result)
+        print("Fuzzy output:", fuzzy_result)
 
-        # =========================
-        # SAVE LIVE RESULT
-        # =========================
-
-        latest_result = {
-
-            "predicted_systolic_bp":
-                round(predicted_bp, 2),
-
-            "heart_rate":
-                round(heart_rate, 1),
-
-            "temperature":
-                round(temperature, 2),
-
-            "respiratory_rate":
-                respiratory_rate,
-
-            "risk_score":
-                fuzzy_result[
-                    "risk_score"
-                ],
-
-            "risk_level":
-                fuzzy_result[
-                    "risk_level"
-                ]
+        response_data = {
+            "predicted_systolic_bp": round(
+                float(predicted_bp),
+                2,
+            ),
+            "heart_rate": _format_heart_rate(
+                heart_rate
+            ),
+            "temperature": round(
+                float(temperature),
+                2,
+            ),
+            "respiratory_rate": respiratory_rate,
+            "risk_level": fuzzy_result.get(
+                "risk_level",
+                "MODERATE",
+            ),
+            "risk_score": round(
+                float(
+                    fuzzy_result.get(
+                        "risk_score",
+                        50.0,
+                    )
+                ),
+                2,
+            ),
         }
 
-        print(
-            latest_result
-        )
+        with latest_result_lock:
+            latest_result = dict(
+                response_data
+            )
+
+        elapsed_ms = (
+            time.perf_counter() - start_time
+        ) * 1000.0
+        print(f"Prediction completed in {elapsed_ms:.2f} ms")
 
         return jsonify(
-            latest_result
+            response_data
         )
 
-    except Exception as e:
+    except RequestValidationError as exc:
+        elapsed_ms = (
+            time.perf_counter() - start_time
+        ) * 1000.0
+        print(f"Prediction failed in {elapsed_ms:.2f} ms")
+        print("Validation error:", str(exc))
+        return json_error(
+            str(exc),
+            400,
+        )
 
-        print("=" * 80)
-        print("FULL ERROR")
+    except PredictionError as exc:
+        elapsed_ms = (
+            time.perf_counter() - start_time
+        ) * 1000.0
+        print(f"Prediction failed in {elapsed_ms:.2f} ms")
+        print("Prediction error:")
         traceback.print_exc()
-        print("=" * 80)
+        return json_error(
+            str(exc),
+            500,
+        )
 
-        return jsonify({
+    except Exception as exc:
+        elapsed_ms = (
+            time.perf_counter() - start_time
+        ) * 1000.0
+        print(f"Prediction failed in {elapsed_ms:.2f} ms")
+        print("Full traceback:")
+        traceback.print_exc()
+        return json_error(
+            str(exc),
+            500,
+        )
 
-            "error": str(e)
-
-        }), 500
-
-
-# ======================================
-# RUN SERVER
-# ======================================
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000,
+        )
+    )
 
     app.run(
         host="0.0.0.0",
         port=port,
-        debug=False
+        debug=False,
     )

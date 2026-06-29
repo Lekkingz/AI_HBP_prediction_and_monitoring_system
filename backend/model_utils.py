@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 import traceback
 
 import numpy as np
@@ -26,7 +27,9 @@ model = None
 model_load_error = None
 model_ready = False
 model_warming = False
+model_warmup_started_at = None
 model_lock = threading.Lock()
+MODEL_WARMUP_STALE_SECONDS = 60
 
 
 class PredictionError(Exception):
@@ -98,6 +101,7 @@ def warm_up_model():
 
     global model_ready
     global model_warming
+    global model_warmup_started_at
     global model_load_error
 
     with model_lock:
@@ -105,6 +109,7 @@ def warm_up_model():
             return
 
         model_warming = True
+        model_warmup_started_at = time.monotonic()
 
     try:
         loaded_model = get_model()
@@ -144,6 +149,7 @@ def warm_up_model():
     finally:
         with model_lock:
             model_warming = False
+            model_warmup_started_at = None
 
 
 def start_model_warmup():
@@ -159,13 +165,28 @@ def start_model_warmup():
 def ensure_model_ready():
     """Fail fast while TensorFlow is warming instead of timing out on Render."""
 
+    global model_warming
+    global model_warmup_started_at
+
     with model_lock:
         ready = model_ready
         warming = model_warming
+        warmup_started_at = model_warmup_started_at
         error = model_load_error
 
     if ready:
         return
+
+    if warming and warmup_started_at is not None:
+        warming_for = time.monotonic() - warmup_started_at
+
+        if warming_for > MODEL_WARMUP_STALE_SECONDS:
+            print("Model warmup appears stale; restarting warmup thread.")
+
+            with model_lock:
+                model_warming = False
+                model_warmup_started_at = None
+                warming = False
 
     if not warming:
         start_model_warmup()

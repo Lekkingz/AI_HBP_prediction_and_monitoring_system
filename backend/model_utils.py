@@ -302,6 +302,3 @@ def predict_bp(ppg_signal):
         print("Model prediction failed:")
         traceback.print_exc()
         raise PredictionError(str(exc)) from exc
-
-
-start_model_warmup()

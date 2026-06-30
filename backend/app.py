@@ -237,7 +237,11 @@ def predict():
             "temperature",
             36.5,
         )
-        respiratory_rate = 21
+        respiratory_rate = _optional_float(
+            data,
+            "respiratory_rate",
+            16.0,
+        )
 
         predicted_bp = predict_bp(
             ppg_signal
